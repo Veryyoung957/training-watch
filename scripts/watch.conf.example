@@ -1,0 +1,77 @@
+# watch.conf.example -- train_watch.sh 的配置模板
+#
+# 规则：
+#   * 一行一个 key=value，不支持 shell 语法（不会被 source，安全）
+#   * # 之后是注释，所以值里不要出现 #
+#   * 相对路径按本配置文件所在目录解析
+#   * 只填你需要的，其余走默认值
+#
+# 最小可用：
+#   pidfile=run/train.pid
+#   log=run/train.log
+#   topic=dimp-xxxxxxxx
+#
+# ---------------------------------------------------------------------------
+
+# 运行名，只用于告警标题和记录
+name=dimp-t9
+
+# ---- 三样"探针"文件（由 run_train.sh 自动产生） ----
+pidfile=run/train.pid              # run_train.sh 写的 wrapper pid
+child_pidfile=run/train.pid.child   # run_train.sh 写的真实训练 pid
+exit_code_file=run/train.exit       # 退出码；没这个就只能报 PROCESS_GONE 不能归因
+
+# ---- 日志 ----
+# 单文件用 log；多 rank / 多文件用 log_glob（支持 *，如 logs/rank*.log）
+log=run/train.log
+# log_glob=logs/rank*.log
+
+# ---- 判据阈值 ----
+interval=30          # 采样间隔（秒），决定发现延迟
+stall_sec=900        # 日志超过这么久不动 => LOG_STALL。必须大于 Python 缓冲刷盘间隔！
+heartbeat_sec=300    # 心跳推送间隔；0 表示不发
+no_progress=0        # >0：连续 N 次采样 GPU 0% 且日志不动 => NO_PROGRESS
+# no_progress_sec=1800
+fault_cooldown=1800  # --keep-running 时同一故障的去重窗口
+
+# ---- 推送 ----
+topic=                       # 空 = 只打印不推送（本地调试用这个）
+ntfy_url=https://ntfy.sh     # 自托管：换成自己的地址
+
+# ---- 平台适配 ----
+gpu=auto             # auto（有 nvidia-smi 才采样）| on | off（CPU / MPS / TPU / AMD）
+pgid_check=auto      # auto | on | off；on 时用进程组兜底判活
+state_dir=/home/vr/.train-watch
+
+# ---- 判据正则（按项目实际日志改！） ----
+# 先跑：tail -300 你的日志 | grep -iE "nan|inf|oom|error" 看真实文案
+# pattern_oom=CUDA out of memory|OutOfMemoryError|OOM when allocating|RESOURCE_EXHAUSTED
+# pattern_nan=(loss|metric|acc|ppl)[=: ]+.*(nan|inf)
+# pattern_traceback=Traceback \(most recent call last\)|RuntimeError|Segmentation fault
+# extra_pattern=你项目特有的错误关键字
+
+# ---------------------------------------------------------------------------
+# 预置 A：单进程 PyTorch（单卡）
+#   name=exp-a
+#   pidfile=run/train.pid
+#   child_pidfile=run/train.pid.child
+#   exit_code_file=run/train.exit
+#   log=run/train.log
+#   gpu=auto
+#   stall_sec=900
+#
+# 预置 B：torchrun / accelerate / deepspeed（多进程）
+#   name=exp-b
+#   pidfile=run/train.pid
+#   child_pidfile=run/train.pid.child
+#   exit_code_file=run/train.exit
+#   log_glob=run/rank*.log        # 每个 rank 一个日志
+#   gpu=on
+#   pgid_check=on                 # 进程组兜底：launcher 死了 worker 还活着也能判出
+#   stall_sec=1800                # 多 rank 时刷盘更不规律，阈值放宽
+#   interval=60
+#
+# 预置 C：CPU / MPS / TPU
+#   gpu=off
+#   stall_sec=900
+#   # 没有 GPU 就靠日志判活；no_progress 不可用
