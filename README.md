@@ -1,48 +1,49 @@
+English | [中文](README.zh-CN.md)
+
 # training-watch
 
-一个与模型、框架无关的**远程训练看门狗**：远端跑脚本盯训练，出事就推送告警（带日志尾部），并把你正在用的 AI agent 从会话里叫醒去处理。
-
-> **English**: A model-agnostic watchdog for remote training runs. It samples the training process, log and GPU on the remote host, pushes alerts with the log tail when something dies, stalls, OOMs or hits NaN, and — crucially — *wakes an AI agent session* so it can diagnose and respond, instead of just sending a notification nobody reads.
+A model- and framework-agnostic watchdog for **remote training runs**. It samples the training process, the log and the GPU on the remote host, pushes an alert with the log tail when something dies, stalls, OOMs or goes NaN — and, the part that actually matters, **wakes your AI agent session** so it can diagnose and respond, instead of firing a notification nobody reads.
 
 ```
-远端 watchdog ──[FAULT + 日志尾部]──▶ ntfy ──▶ 本机叫醒器 ──▶ 作业退出 ──▶ agent 被唤醒
+remote watchdog ──[FAULT + log tail]──▶ ntfy ──▶ local waker ──▶ job exits ──▶ agent wakes up
 ```
 
-## 它解决什么问题
+## The problem
 
-长训练跑在远端，人不可能一直守着。普通监控脚本只能"发现异常"，做不到"让人或 agent 接手"；而 agent 的回合结束后不会自己醒过来。
+Long training runs live on a remote box. You cannot watch them, and a plain monitoring script only tells you *that* something broke — it cannot get a human or an agent to pick it up. Meanwhile an agent's turn ends and it has no reason to wake up on its own.
 
-本项目的两个关键点：
+Two design decisions carry the whole thing:
 
-1. **远端自治**：watchdog 独立于训练运行，不依赖你的电脑在线。
-2. **退出码即信号**：本机叫醒器读到故障就 `exit 0`，后台作业结束触发运行时通知，agent 因此被真正唤醒 —— 不是发一条没人看的消息。
+1. **The watchdog lives on the remote host.** It runs independently of your laptop, so closing the lid does not stop supervision.
+2. **An exit code is the wake signal.** The local waker `exit 0` on a received fault; its background job completing triggers a runtime notification, which starts a real agent turn. Not a message sitting in a queue.
 
-## 三个探针
+## The three probes
 
-与训练代码只有三个约定，任何框架把这三样落到文件就能被监督：
+There are exactly three contracts with your training code. Any framework that writes these three files can be supervised:
 
-| 探针 | 回答的问题 | 谁写 |
+| Probe | Question it answers | Written by |
 |---|---|---|
-| `pidfile` + `<pidfile>.child` | 还活着吗 | `run_train.sh` |
-| `exit_code_file` | 怎么死的（137=OOM killer、139=段错误、1=异常） | `run_train.sh` |
-| `log` / `log_glob` | 在动吗、报了什么错 | 你的训练脚本 |
+| `pidfile` + `<pidfile>.child` | Is it still alive? | `run_train.sh` |
+| `exit_code_file` | How did it die? (137 = OOM killer, 139 = segfault, 1 = exception) | `run_train.sh` |
+| `log` / `log_glob` | Is it moving, and what did it say? | your training script |
 
-为什么必须记录退出码：**被内核 OOM killer 杀掉的进程，日志里可能一个字都没有**。只有 137 能区分"被系统杀"和"自己崩了"。
+Why the exit code is not optional: **a process killed by the kernel OOM killer may leave no trace in the log at all.** Only the exit status distinguishes "the system killed it" from "it crashed on its own".
 
-## 快速开始
+## Quick start
 
 ```bash
-# 0. 取脚本
+# 0. Get the scripts
 git clone https://github.com/Veryyoung957/training-watch.git
 cd training-watch
 
-# 1. 生成 topic（topic 即密码）
+# 1. Generate a topic (the topic name is the password)
 TOPIC="train-$(head -c8 /dev/urandom | od -An -tx1 | tr -d ' \n')"
 
-# 2. 传到远端
+# 2. Copy to the remote host
 scp -r scripts watch.conf.example user@host:~/training-watch/
 
-# 3. 远端：用 run_train.sh 启动训练（它会写 pid / child pid / 退出码）
+# 3. Remote: launch training through run_train.sh
+#    (it records pid, child pid and the exit code)
 cd ~/training-watch
 nohup bash scripts/run_train.sh \
   --pidfile ~/run/train.pid \
@@ -50,7 +51,7 @@ nohup bash scripts/run_train.sh \
   --exit-code-file ~/run/train.exit \
   -- .venv/bin/python train.py > /dev/null 2>&1 &
 
-# 4. 远端：起看门狗
+# 4. Remote: start the watchdog
 cat > ~/run/watch.conf <<EOF
 name=my-exp
 pidfile=~/run/train.pid
@@ -64,97 +65,98 @@ topic=$TOPIC
 EOF
 nohup bash scripts/train_watch.sh --config ~/run/watch.conf > ~/run/watch.log 2>&1 &
 
-# 5. 本机：起叫醒器（必须后台运行，退出码才有接收方）
+# 5. Local: start the waker in the background
+#    (it must be a background job — otherwise nothing receives the exit code)
 scripts/watch_wake.sh --topic "$TOPIC" --interval 10 --timeout 86400
 ```
 
-手机装 [ntfy](https://ntfy.sh) 订阅同一个 topic，告警会同时到你手机。
+Install [ntfy](https://ntfy.sh) on your phone and subscribe to the same topic to get the alert on mobile too.
 
-## 验收（务必先演练）
+## Smoke test first
 
-不要拿真训练当第一个测试。跑一个 18 秒就崩的假训练：
+Do not make a real training run your first test. Fire an 18-second fake run that crashes on purpose:
 
 ```bash
 bash scripts/run_train.sh --pidfile /tmp/t/run/train.pid --log /tmp/t/run/train.log \
   --exit-code-file /tmp/t/run/train.exit -- \
   bash -c 'for i in 1 2 3; do echo "ep $i loss=0.5"; sleep 2; done; exit 3' &
 
-# 用 interval=2 的临时配置跑一遍，期望看到：
+# run the watchdog once with interval=2, expect:
 #   [watch] FAULT PROCESS_GONE — pid=6 exit=3 -> EXIT_3
 ```
 
-成功标志：agent 会话**在没有任何用户输入的情况下**自行开了一轮。
+Success looks like: the agent session starts a turn **with no user input at all**.
 
-## 配置
+## Configuration
 
-| key | 默认 | 说明 |
+| Key | Default | Meaning |
 |---|---|---|
-| `name` | `train` | 告警标题里的运行名 |
-| `pidfile` | 必填 | wrapper 的 pid |
-| `child_pidfile` | — | 真实训练进程 pid（防"wrapper 活着训练已死"） |
-| `exit_code_file` | — | 退出码文件，没有就只能报 `PROCESS_GONE`，无法归因 |
-| `log` / `log_glob` | 二选一必填 | 单文件 / 多 rank 通配 |
-| `interval` | 30 | 采样间隔，决定发现延迟 |
-| `stall_sec` | 900 | 日志停更多久判 `LOG_STALL`，**必须大于刷盘间隔** |
-| `heartbeat_sec` | 300 | 心跳间隔，`0` 关闭 |
-| `gpu` | `auto` | `auto`/`on`/`off`；CPU、MPS、TPU 设 `off` |
-| `pgid_check` | `auto` | 进程组兜底判活 |
-| `no_progress` | 0 | >0：连续 N 次 GPU 0% 且日志不动即告警 |
-| `fault_cooldown` | 1800 | `--keep-running` 时同一故障去重窗口 |
-| `topic` | 空 | 留空 = 只打印不推送（本地调试） |
-| `ntfy_url` | `https://ntfy.sh` | 可指向自托管实例 |
-| `pattern_oom` / `pattern_nan` / `pattern_traceback` / `extra_pattern` | 见模板 | 判据正则，**按项目实际日志改** |
+| `name` | `train` | Run name used in alert titles |
+| `pidfile` | required | pid of the wrapper |
+| `child_pidfile` | — | pid of the real training process (catches "wrapper alive, training dead") |
+| `exit_code_file` | — | Without it you only get `PROCESS_GONE`, with no attribution |
+| `log` / `log_glob` | one required | Single file / glob for multi-rank runs |
+| `interval` | 30 | Sampling period; sets detection latency |
+| `stall_sec` | 900 | Log silence that counts as `LOG_STALL` — **must exceed log flush interval** |
+| `heartbeat_sec` | 300 | Heartbeat interval; `0` disables |
+| `gpu` | `auto` | `auto`/`on`/`off`; set `off` on CPU, MPS or TPU |
+| `pgid_check` | `auto` | Process-group liveness as a fallback |
+| `no_progress` | 0 | >0: alert after N consecutive samples with GPU at 0% and a static log |
+| `fault_cooldown` | 1800 | De-duplication window for the same fault under `--keep-running` |
+| `topic` | empty | Empty = print only, no push (local debugging) |
+| `ntfy_url` | `https://ntfy.sh` | Point at a self-hosted instance if needed |
+| `pattern_oom` / `pattern_nan` / `pattern_traceback` / `extra_pattern` | see template | Detection regexes — **tune them against your real log** |
 
-## 判据
+## Fault codes
 
-| code | 含义 | 处置 |
+| Code | Meaning | What to do |
 |---|---|---|
-| `PROCESS_GONE` + `OOMKILLED` | 被内核 OOM killer 杀，日志里可能没有痕迹 | 降 batch/长度，别盲目重试 |
-| `PROCESS_GONE` + `EXIT_1` | Python 异常退出 | 看 traceback |
-| `PROCESS_GONE` + `SEGFAULT` | 段错误 | 查驱动 / so 版本 |
-| `LOG_STALL` | 进程在但日志不动 | 多半 dataloader 卡死，`py-spy dump` |
-| `OOM` / `NAN` / `TRACEBACK` | 日志命中关键字 | 按关键字处置 |
-| `NO_PROGRESS` | GPU 一直 0% 且日志不动 | 死锁 / 数据管道空转 |
+| `PROCESS_GONE` + `OOMKILLED` | Killed by the kernel OOM killer; the log may show nothing | Reduce batch size / sequence length; do not blindly retry |
+| `PROCESS_GONE` + `EXIT_1` | Python exception | Read the traceback |
+| `PROCESS_GONE` + `SEGFAULT` | Segfault | Check driver / shared-library versions |
+| `LOG_STALL` | Process alive, log frozen | Usually a deadlocked dataloader; `py-spy dump` |
+| `OOM` / `NAN` / `TRACEBACK` | Log matched a pattern | Handle by keyword |
+| `NO_PROGRESS` | GPU stuck at 0% with a static log | Deadlock or an empty data pipeline |
 
-## 适配其他框架
+## Adapting to other frameworks
 
-| 场景 | 配置改动 |
+| Setup | Configuration change |
 |---|---|
-| PyTorch 单卡 | 默认 |
-| torchrun / accelerate / deepspeed | `log_glob=run/rank*.log`、`pgid_check=on`、`interval=60`、`stall_sec=1800` |
+| PyTorch, single GPU | defaults |
+| torchrun / accelerate / deepspeed | `log_glob=run/rank*.log`, `pgid_check=on`, `interval=60`, `stall_sec=1800` |
 | TensorFlow / Keras | `pattern_oom=OOM when allocating\|Resource exhausted` |
 | JAX / Flax | `pattern_oom=RESOURCE_EXHAUSTED` |
-| CPU / MPS / TPU | `gpu=off`；`NO_PROGRESS` 不可用 |
-| 指标只写 tensorboard / wandb | `NAN` 判据失效 → 让训练每 N step 打印一行 |
+| CPU / MPS / TPU | `gpu=off`; `NO_PROGRESS` is unavailable |
+| Metrics only in tensorboard / wandb | The `NAN` check cannot see them — print a line every N steps |
 
-## 装成 AI 技能（DeepSeek Harness）
+## Install as an AI skill (DeepSeek Harness)
 
-这个仓库本身就是一个技能：`SKILL.md` 是入口，`references/` 按需加载，`scripts/` 是可直接部署的代码。
+This repository is itself a skill: `SKILL.md` is the entry point, `references/` loads on demand, `scripts/` is deployable code.
 
 ```bash
 git clone https://github.com/Veryyoung957/training-watch.git \
   ~/.dsh/skills/training-watch
 ```
 
-之后在会话里说「帮我把这个训练盯起来 / 训练挂了叫我」即可触发。
+Then say "watch this training run for me" / "ping me if it dies" and the skill takes over.
 
-## 设计取舍
+## Design notes
 
-- **为什么远端推、本机收**：很多机器上本机 `ssh` 不可用（系统配置损坏 / 无密钥 / 防火墙），而 `/api` 有鉴权。详见 [`references/design.md`](references/design.md)。
-- **为什么不做自动 resume**：「自动重拉」和「静默烧卡」只差一个 bug。watchdog 只上报，恢复留给确认后的人或 agent。
-- **为什么叫醒器收到一条就退出**：退出码才是唤醒信号；常驻会刷屏，也会让故障被自动吞掉。
+- **Why the remote pushes and the local side polls**: on many machines the local `ssh` client is unusable (broken system config, no keys, firewall), while the local API is authenticated. See [`references/design.md`](references/design.md).
+- **Why there is no automatic resume**: "auto-restart" and "silently burn GPU hours" differ by one bug. The watchdog reports; recovery waits for a human or agent to confirm.
+- **Why the waker exits after one fault**: the exit code is the signal. Staying resident both spams and lets faults be swallowed automatically.
 
-## 排查
+## Troubleshooting
 
-告警没来、误报、多 rank、换机器后不工作 —— 见 [`references/troubleshooting.md`](references/troubleshooting.md)。
+Alerts not arriving, false positives, multi-rank runs, a new machine that does not work — see [`references/troubleshooting.md`](references/troubleshooting.md).
 
-## 依赖与限制
+## Requirements and limits
 
-- 远端：`bash`、`curl`、GNU coreutils（`date -d`、`stat -c`；macOS 需装 gdate/gstat 或改用 Linux）
-- 本机：`bash`、`curl`、`jq`
-- 两端需要能访问 `ntfy.sh`（或自托管实例）
-- **harness 进程挂了就没人醒**：轮询脚本也随之消失，兜底只有手机通知
-- ntfy.sh 是公网明文服务，topic 名即密码；敏感日志请换自托管
+- Remote: `bash`, `curl`, GNU coreutils (`date -d`, `stat -c`; on macOS install gdate/gstat or use Linux)
+- Local: `bash`, `curl`, `jq`
+- Both sides need to reach `ntfy.sh` (or your self-hosted instance)
+- **If the harness process dies, nobody wakes up** — the polling script goes with it; only the phone alert remains
+- `ntfy.sh` is a public, unencrypted relay and the topic name is the password; use a self-hosted instance for sensitive logs
 
 ## License
 
