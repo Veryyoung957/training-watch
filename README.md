@@ -40,7 +40,7 @@ cd training-watch
 TOPIC="train-$(head -c8 /dev/urandom | od -An -tx1 | tr -d ' \n')"
 
 # 2. Copy to the remote host
-scp -r scripts watch.conf.example user@host:~/training-watch/
+scp -r skills/training-watch user@host:~/
 
 # 3. Remote: launch training through run_train.sh
 #    (it records pid, child pid and the exit code)
@@ -133,22 +133,33 @@ Success looks like: the agent session starts a turn **with no user input at all*
 
 This repository is itself a skill: `SKILL.md` is the entry point, `references/` loads on demand, `scripts/` is deployable code.
 
+```text
+skills/training-watch/      <- the skill itself
+├── SKILL.md
+├── references/
+└── scripts/
+```
+
 ```bash
-git clone https://github.com/Veryyoung957/training-watch.git \
-  ~/.dsh/skills/training-watch
+# recommended: let gh install it
+gh skill install Veryyoung957/training-watch training-watch
+
+# or manually: clone and copy the skill folder
+git clone --depth 1 https://github.com/Veryyoung957/training-watch.git /tmp/tw
+cp -r /tmp/tw/skills/training-watch ~/.dsh/skills/
 ```
 
 Then say "watch this training run for me" / "ping me if it dies" and the skill takes over.
 
 ## Design notes
 
-- **Why the remote pushes and the local side polls**: on many machines the local `ssh` client is unusable (broken system config, no keys, firewall), while the local API is authenticated. See [`references/design.md`](references/design.md).
+- **Why the remote pushes and the local side polls**: on many machines the local `ssh` client is unusable (broken system config, no keys, firewall), while the local API is authenticated. See [`references/design.md`](skills/training-watch/references/design.md).
 - **Why there is no automatic resume**: "auto-restart" and "silently burn GPU hours" differ by one bug. The watchdog reports; recovery waits for a human or agent to confirm.
 - **Why the waker exits after one fault**: the exit code is the signal. Staying resident both spams and lets faults be swallowed automatically.
 
 ## Troubleshooting
 
-Alerts not arriving, false positives, multi-rank runs, a new machine that does not work — see [`references/troubleshooting.md`](references/troubleshooting.md).
+Alerts not arriving, false positives, multi-rank runs, a new machine that does not work — see [`references/troubleshooting.md`](skills/training-watch/references/troubleshooting.md).
 
 ## Requirements and limits
 

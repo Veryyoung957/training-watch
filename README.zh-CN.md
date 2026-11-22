@@ -40,7 +40,7 @@ cd training-watch
 TOPIC="train-$(head -c8 /dev/urandom | od -An -tx1 | tr -d ' \n')"
 
 # 2. 传到远端
-scp -r scripts watch.conf.example user@host:~/training-watch/
+scp -r skills/training-watch user@host:~/
 
 # 3. 远端：用 run_train.sh 启动训练（它会写 pid / child pid / 退出码）
 cd ~/training-watch
@@ -131,22 +131,33 @@ bash scripts/run_train.sh --pidfile /tmp/t/run/train.pid --log /tmp/t/run/train.
 
 这个仓库本身就是一个技能：`SKILL.md` 是入口，`references/` 按需加载，`scripts/` 是可直接部署的代码。
 
+```text
+skills/training-watch/      <- 技能本体
+├── SKILL.md
+├── references/
+└── scripts/
+```
+
 ```bash
-git clone https://github.com/Veryyoung957/training-watch.git \
-  ~/.dsh/skills/training-watch
+# 推荐：用 gh 直接安装
+gh skill install Veryyoung957/training-watch training-watch
+
+# 或者手动：克隆后把技能目录拷进去
+git clone --depth 1 https://github.com/Veryyoung957/training-watch.git /tmp/tw
+cp -r /tmp/tw/skills/training-watch ~/.dsh/skills/
 ```
 
 之后在会话里说「帮我把这个训练盯起来 / 训练挂了叫我」即可触发。
 
 ## 设计取舍
 
-- **为什么远端推、本机收**：很多机器上本机 `ssh` 不可用（系统配置损坏 / 无密钥 / 防火墙），而 `/api` 有鉴权。详见 [`references/design.md`](references/design.md)。
+- **为什么远端推、本机收**：很多机器上本机 `ssh` 不可用（系统配置损坏 / 无密钥 / 防火墙），而 `/api` 有鉴权。详见 [`references/design.md`](skills/training-watch/references/design.md)。
 - **为什么不做自动 resume**：「自动重拉」和「静默烧卡」只差一个 bug。watchdog 只上报，恢复留给确认后的人或 agent。
 - **为什么叫醒器收到一条就退出**：退出码才是唤醒信号；常驻会刷屏，也会让故障被自动吞掉。
 
 ## 排查
 
-告警没来、误报、多 rank、换机器后不工作 —— 见 [`references/troubleshooting.md`](references/troubleshooting.md)。
+告警没来、误报、多 rank、换机器后不工作 —— 见 [`references/troubleshooting.md`](skills/training-watch/references/troubleshooting.md)。
 
 ## 依赖与限制
 

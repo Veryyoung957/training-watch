@@ -1,5 +1,6 @@
 ---
 name: training-watch
+license: MIT
 description: "Supervise any model's remote SSH training with a config-driven watchdog: detects process death (with exit-code attribution), log stall, OOM, NaN or tracebacks, pushes alerts with log tails through ntfy, and wakes the session so the agent can diagnose and respond. Use when the user asks to 监督/盯/监控 a training run, to be alerted when a remote job dies, to sync training logs back, or before starting a long training that must not silently fail. Works for PyTorch / TensorFlow / JAX / torchrun / DeepSpeed / single-GPU / CPU."
 ---
 
@@ -30,6 +31,18 @@ description: "Supervise any model's remote SSH training with a config-driven wat
 | `watch.conf.example` | 远端 | 配置模板 |
 
 用 `ssh_upload` 传远端，`chmod +x`。**不要用 heredoc 拼长脚本**，引号会坏。
+
+### 换一个宿主时（Claude Code / Cursor / 其它）
+
+本文用的是 DeepSeek Harness 的工具名，等价操作：
+
+| 本文写法 | 通用含义 |
+|---|---|
+| `ssh_upload` / `ssh_exec` | 把文件传到远端 / 在远端执行命令 |
+| `run_in_background` | 作为后台作业运行，并保留退出码 |
+| `job_kill` | 终止该后台作业 |
+| `~/.dsh/skills/` | 宿主自己的技能目录 |
+
 
 ## 深入阅读（按需，不必开头就全读）
 
